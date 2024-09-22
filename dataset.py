@@ -2,38 +2,48 @@ import cv2
 import numpy as np
 from torch.utils.data import Dataset, DataLoader
 import torch
-from utils import create_label_at_one_xml_path,get_augmentor, load_and_split_json
+from utils import for_test_decode_label, load_and_split_json, ParseJson, non_max_suppression,draw
 from PIL import Image as image
+import matplotlib.pyplot as plt
 
 
 class Dataset(Dataset):
-    def __init__(self,xml_arr,img_dir):
-        self.xml_np = xml_arr
-        self.img_dir = img_dir
-        self.augmentor = get_augmentor()
-        self.img = torch.from_numpy(np.zeros(shape=(len(self.xml_np),3,224,224))).float()
-        self.label = torch.from_numpy(np.zeros(shape=(len(self.xml_np),7,7,25))).float()
-        self.augmentor = get_augmentor()
-        cnt = 0
-        for i in range(len(self.xml_np)):
-            img_path, label=create_label_at_one_xml_path((self.xml_np[i]),self.img_dir)
-            img = image.open(img_path)
-            img = np.array(img)
-            img = cv2.resize(img/224.0,dsize=(224,224))
-            self.img[i] = (torch.from_numpy(img)).permute(2,0,1)
-            self.label[i]=torch.from_numpy(label).float()
-            cnt +=1
+    def __init__(self, json_dir):
+        self.json_dir = json_dir
+        '''
+        self.img = torch.from_numpy(np.zeros(shape=(len(self.json_dir), 3, 224, 224))).float()
+        self.label = torch.from_numpy(np.zeros(shape=(len(self.json_dir), 7, 7, 25))).float()
+        '''
 
-        print(cnt)
     def __getitem__(self, idx):
+        img, label = ParseJson(self.json_dir[idx])
 
-        return self.img[idx],self.label[idx]
+        return img, label
 
     def __len__(self):
-        return int(len(self.xml_np))
+        return int(len(self.json_dir))
+
 
 if __name__ == "__main__":
-
-
     train_json, test_json = load_and_split_json()
+    ds = Dataset(train_json)
 
+
+    while True:
+        dl = DataLoader(ds, batch_size=8,shuffle=True)
+        img, label = next(iter(dl))
+
+        tmp = img[0].detach().permute(1, 2, 0).cpu().numpy()
+
+        tmp = (tmp * 224.0).astype('uint8')
+
+        tmp = cv2.cvtColor(tmp, cv2.COLOR_RGB2BGR)
+
+        boxes, class_list = for_test_decode_label(label[0].numpy())
+        boxes, class_list = non_max_suppression(boxes, 0.3, 0.4, class_list)
+        img = draw(boxes, tmp, class_list)
+
+        cv2.imshow('Image Window', img)
+        plt.imshow(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+
+        plt.show()

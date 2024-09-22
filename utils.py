@@ -6,7 +6,6 @@ import cv2 as cv
 from tqdm import tqdm
 from torchvision.transforms import transforms
 import os
-from sklearn.model_selection import train_test_split
 import torch
 import config
 import random
@@ -22,80 +21,84 @@ classes_num = {'종이류': 0, '플라스틱류': 1, '유리병류': 2, '캔류'
                '전자제품': 6, '스티로폼류': 7, '도기류': 8, '비닐류': 9, '가구': 10, '자전거': 11,
                '형광등': 12, '페트병류': 13, '나무류': 14}
 classes_num_rev = {
-    0: '종이류',
-    1: '플라스틱',
-    2: '유리',
-    3: '캔',
-    4: '고철류',
-    5: '의류',
-    6: '전자제품',
-    7: '스티로폼',
-    8: '도기류',
-    9: '비닐류',
-    10: '가구',
-    11: '자전거',
-    12: '형광등',
-    13: '페트병류',
-    14: '나무류',
+    0: 'paper',
+    1: 'plastic',
+    2: 'glass',
+    3: 'cans',
+    4: 'scrap metal',
+    5: 'clothes',
+    6: 'electronics',
+    7: 'styrofoam',
+    8: 'pottery',
+    9: 'Vinyls',
+    10: 'furniture',
+    11: 'bicycle',
+    12: 'fluorescent lamp',
+    13: 'PET bottles',
+    14: 'trees',
 }
 
 IMG_SIZE = 224.0
 
 CELL = 32.0
 
+from PIL import Image as image
 
-def create_label_at_one_xml_path(xml_path, img_dir):
-    tree = ET.parse(xml_path)
-    root = tree.getroot()
-    width = float(root.find('size').find('width').text)
-    height = float(root.find('size').find('height').text)
-    img_name = root.find('filename').text
-    img_path = img_dir + '/' + img_name
 
-    label = np.zeros(shape=(7, 7, 25), dtype=float)
+def ParseJson(Json):
+    img_path = Json['img_path']
+    bbox = Json['bbox']
+    cls = Json['cls']
+    gps: tuple = Json['gps'].split('_')  # 위도 경도 tuple
+    img = np.array(image.open(img_path))
+    width = img.shape[1]
+    height = img.shape[0]
+    label = np.zeros(shape=(7, 7, 20), dtype=float)
     ration_x = IMG_SIZE / width
     ratio_y = IMG_SIZE / height
 
-    for obj in root.findall('object'):
-        class_name = obj.find('name').text
-        class_id = classes_num[class_name]
+    class_name = classes_num_rev[cls]
 
-        xmin = float(obj.find('bndbox').find('xmin').text)
-        ymin = float(obj.find('bndbox').find('ymin').text)
-        xmax = float(obj.find('bndbox').find('xmax').text)
-        ymax = float(obj.find('bndbox').find('ymax').text)
+    xmin = float(bbox[0])
+    ymin = float(bbox[1])
+    xmax = float(bbox[2])
+    ymax = float(bbox[3])
 
-        cx = xmin + ((xmax - xmin) / 2)
-        cy = ymin + ((ymax - ymin) / 2)
-        w = xmax - xmin
-        h = ymax - ymin
+    cx = xmin + ((xmax - xmin) / 2)
+    cy = ymin + ((ymax - ymin) / 2)
+    w = xmax - xmin
+    h = ymax - ymin
 
-        # mapped by new ratio
-        rcx = cx * ration_x
-        rcy = cy * ratio_y
-        rw = w * ration_x
-        rh = h * ratio_y
+    # mapped by new ratio
+    rcx = cx * ration_x
+    rcy = cy * ratio_y
+    rw = w * ration_x
+    rh = h * ratio_y
 
-        cell_position_x = int(rcx / CELL)
-        cell_position_y = int(rcy / CELL)
+    cell_position_x = int(rcx / CELL)
+    cell_position_y = int(rcy / CELL)
 
-        # 각 셀의 시작 x, y 좌표를 계산합니다.
-        start_x = cell_position_x * CELL
-        start_y = cell_position_y * CELL
+    # 각 셀의 시작 x, y 좌표를 계산합니다.
+    start_x = cell_position_x * CELL
+    start_y = cell_position_y * CELL
 
-        rcx = (rcx - start_x) / CELL
-        rcy = (rcy - start_y) / CELL
+    rcx = (rcx - start_x) / CELL
+    rcy = (rcy - start_y) / CELL
 
-        rw = rw / IMG_SIZE
-        rh = rh / IMG_SIZE
+    rw = rw / IMG_SIZE
+    rh = rh / IMG_SIZE
 
-        label[cell_position_x, cell_position_y][20] = rcx
-        label[cell_position_x, cell_position_y][21] = rcy
-        label[cell_position_x, cell_position_y][22] = rw
-        label[cell_position_x, cell_position_y][23] = rh
-        label[cell_position_x, cell_position_y][24] = 1.0
-        label[cell_position_x, cell_position_y][class_id] = 1.0
-    return img_path, label
+    label[cell_position_x, cell_position_y][15] = rcx
+    label[cell_position_x, cell_position_y][16] = rcy
+    label[cell_position_x, cell_position_y][17] = rw
+    label[cell_position_x, cell_position_y][18] = rh
+    label[cell_position_x, cell_position_y][19] = 1.0
+    label[cell_position_x, cell_position_y][cls] = 1.0
+    img = cv2.resize(img / 224.0, dsize=(224, 224))
+    img = (torch.from_numpy(img)).permute(2, 0, 1)
+    label = torch.from_numpy(label).float()
+
+    return img, label
 
 
 def decoding_label(label):
@@ -104,34 +107,56 @@ def decoding_label(label):
 
     for i in range(7):
         for j in range(7):
-            cx = (label[i][j][20] * CELL) + (i * CELL)
-            cy = (label[i][j][21] * CELL) + (j * CELL)
-            w = label[i][j][22] * IMG_SIZE
-            h = label[i][j][23] * IMG_SIZE
+            cx = (label[i][j][15] * CELL) + (i * CELL)
+            cy = (label[i][j][16] * CELL) + (j * CELL)
+            w = label[i][j][17] * IMG_SIZE
+            h = label[i][j][18] * IMG_SIZE
 
             xmin = int(cx - w / 2)
             xmax = int(cx + w / 2)
             ymin = int(cy - h / 2)
             ymax = int(cy + h / 2)
             conf = label[i][j][24]
-            class_pred = np.max(label[i][j][:14])
+            class_pred = np.max(label[i][j][:15])
             bbox.append([class_pred, conf, xmin, ymin, xmax, ymax])
-            class_box.append(label[i][j][:20])
+            class_box.append(label[i][j][:15])
 
         for j in range(7):
-            cx = (label[i][j][25] * CELL) + (i * CELL)
-            cy = label[i][j][26] * CELL + (j * CELL)
-            w = label[i][j][27] * IMG_SIZE
-            h = label[i][j][28] * IMG_SIZE
+            cx = (label[i][j][21] * CELL) + (i * CELL)
+            cy = label[i][j][22] * CELL + (j * CELL)
+            w = label[i][j][23] * IMG_SIZE
+            h = label[i][j][24] * IMG_SIZE
 
             xmin = int(cx - w / 2)
             xmax = int(cx + w / 2)
             ymin = int(cy - h / 2)
             ymax = int(cy + h / 2)
-            conf = label[i][j][24]
-            class_pred = np.max(label[i][j][:20])
+            conf = label[i][j][25]
+            class_pred = np.max(label[i][j][:15])
             bbox.append([class_pred, conf, xmin, ymin, xmax, ymax])
-            class_box.append(label[i][j][:20])
+            class_box.append(label[i][j][:15])
+    return bbox, class_box
+
+
+def for_test_decode_label(label):
+    bbox = []
+    class_box = []
+
+    for i in range(7):
+        for j in range(7):
+            cx = (label[i][j][15] * CELL) + (i * CELL)
+            cy = (label[i][j][16] * CELL) + (j * CELL)
+            w = label[i][j][17] * IMG_SIZE
+            h = label[i][j][18] * IMG_SIZE
+
+            xmin = int(cx - w / 2)
+            xmax = int(cx + w / 2)
+            ymin = int(cy - h / 2)
+            ymax = int(cy + h / 2)
+            conf = label[i][j][19]
+            class_pred = np.max(label[i][j][:15])
+            bbox.append([class_pred, conf, xmin, ymin, xmax, ymax])
+            class_box.append(label[i][j][:15])
     return bbox, class_box
 
 
@@ -150,9 +175,9 @@ def draw(bbox_list, img, class_list):
             f'{classes_num_rev[max_index]} | {np.max(class_list[i])}',
             (bbox_list[i][2], bbox_list[i][3]),
             cv2.FONT_HERSHEY_SIMPLEX,
-            fontScale=0.5,
+            fontScale=0.8,
             color=(0, 255, 0),
-            thickness=1,
+            thickness=2,
             lineType=cv2.LINE_AA
         )
 
@@ -204,12 +229,13 @@ def get_json_data(json_dir='/media/sien/DATA/DATA/dataset/eco/생활 폐기물 �
         json.dump(label, file, ensure_ascii=False, indent=4)
     return label
 
-def load_and_split_json(dir = 'output.json'):
-    with open(dir,'r',encoding = 'utf-8') as file :
+
+def load_and_split_json(dir='output.json'):
+    with open(dir, 'r', encoding='utf-8') as file:
         raw = json.load(file)
         l = len(raw)
-        train = raw[:int(l*0.95)]
-        test = raw[int(l*0.95):]
+        train = raw[:int(l * 0.95)]
+        test = raw[int(l * 0.95):]
     return train, test
 
 
@@ -323,4 +349,3 @@ def non_max_suppression(bboxes, conf_th, iou_threshold, class_list):
 if __name__ == "__main__":
     print()
     get_json_data()
-
