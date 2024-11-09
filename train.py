@@ -21,7 +21,7 @@ np.random.seed(100)
 random.seed(100)
 LEARNING_RATE = 2e-4
 DEVICE = "cuda"
-BATCH_SIZE = 256
+BATCH_SIZE = 64
 WEIGHT_DECAY = 0
 NUM_WORKERS = 10
 PIN_MEMORY = False
@@ -153,30 +153,19 @@ if __name__ == "__main__":
     else:
         model.to(DEVICE)
 
-    best_loss = np.inf  # 최상의 검증 손실 추적
+    best_loss = np.inf
 
     for epoch in range(1, EPOCHS + 1):
         print(f'Epoch [{epoch}/{EPOCHS}] 시작')
 
-        # 훈련 단계
-        for data, target in train_loader:
-            # 데이터 비동기 전송
-            with torch.cuda.stream(data_stream):
-                data, target = data.to(DEVICE, non_blocking=True), target.to(DEVICE, non_blocking=True)
+        loss = train_step(
+            train_loader=train_loader,
+            model=model,
+            optimizer=optimizer,
+            loss_fn=loss_fn
+        )
+        print(f'훈련 손실: {loss:.4f}')
 
-            # CUDA 스트림 동기화
-            torch.cuda.synchronize(data_stream)
-
-            # 손실 계산 및 역전파
-            loss = train_step(
-                train_loader=train_loader,
-                model=model,
-                optimizer=optimizer,
-                loss_fn=loss_fn
-            )
-            print(f'훈련 손실: {loss:.4f}')
-
-        # 검증 단계 (5 에포크마다)
         if epoch % 5 == 0:
             print('검증 시작')
             val_loss = validation_step(
@@ -186,13 +175,12 @@ if __name__ == "__main__":
             )
             print(f'검증 손실: {val_loss:.4f}')
 
-            # 최상의 모델 저장
             if val_loss < best_loss:
                 best_loss = val_loss
                 torch.save(model.state_dict(), MODEL_SAVE_PATH)
                 print(f'최상의 검증 손실 갱신: {val_loss:.4f} - 모델 저장 완료')
 
-        print("모델 학습 완료")
+    print("모델 학습 완료")
 
     if MODE == 'inference':
         std = torch.load(f'weights/{BACK}.pt')

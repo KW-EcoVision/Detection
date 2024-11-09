@@ -346,6 +346,27 @@ def non_max_suppression(bboxes, conf_th, iou_threshold, class_list):
     return selected_boxes, selected_classes
 
 
+def ImgChecker(json_path='./output.json'):
+    import json
+    from PIL import Image
+    with open(json_path, 'r', encoding='utf-8') as file:
+        data = json.load(file)
+    valid_data = []
+    for item in tqdm(data, desc="Checking image integrity"):
+        img_path = item["img_path"]
+        try:
+            with Image.open(img_path) as img:
+                img.verify()
+
+            valid_data.append(item)
+        except (IOError, SyntaxError):
+            print(f"Invalid image found and removed: {img_path}")
+
+    with open(json_path, 'w', encoding='utf-8') as file:
+        json.dump(valid_data, file, ensure_ascii=False, indent=4)
+
+    print("Image integrity check completed.")
+
+
 if __name__ == "__main__":
-    print()
-    get_json_data()
+    ImgChecker()
