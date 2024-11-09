@@ -15,7 +15,8 @@ import random
 'img_dir' is not direct_path just dir
 'img_path' is direct img_path
 '''
-
+from PIL import ImageFile
+ImageFile.LOAD_TRUNCATED_IMAGES = True
 img_path_abs = '/media/unsi/media/data/생활 폐기물 이미지/Training/'
 classes_num = {'종이류': 0, '플라스틱류': 1, '유리병류': 2, '캔류': 3, '고철류': 4, '의류': 5,
                '전자제품': 6, '스티로폼류': 7, '도기류': 8, '비닐류': 9, '가구': 10, '자전거': 11,
@@ -50,7 +51,10 @@ def ParseJson(Json):
     bbox = Json['bbox']
     cls = Json['cls']
     gps: tuple = Json['gps'].split('_')  # 위도 경도 tuple
-    img = np.array(image.open(img_path))
+    try:
+        img = np.array(image.open(img_path))
+    except OSError:
+        img = np.zeros((224, 224, 3))
     width = img.shape[1]
     height = img.shape[0]
     label = np.zeros(shape=(7, 7, 20), dtype=float)
@@ -349,18 +353,23 @@ def non_max_suppression(bboxes, conf_th, iou_threshold, class_list):
 def ImgChecker(json_path='./output.json'):
     import json
     from PIL import Image
+    from tqdm import tqdm
+
     with open(json_path, 'r', encoding='utf-8') as file:
         data = json.load(file)
+
     valid_data = []
     for item in tqdm(data, desc="Checking image integrity"):
         img_path = item["img_path"]
         try:
             with Image.open(img_path) as img:
                 img.verify()
+                img = img.convert("RGB")
+                img.copy()
 
             valid_data.append(item)
-        except (IOError, SyntaxError):
-            print(f"Invalid image found and removed: {img_path}")
+        except (IOError, SyntaxError, OSError, AttributeError):
+            print(f"Invalid or corrupted image found and removed: {img_path}")
 
     with open(json_path, 'w', encoding='utf-8') as file:
         json.dump(valid_data, file, ensure_ascii=False, indent=4)
@@ -368,5 +377,8 @@ def ImgChecker(json_path='./output.json'):
     print("Image integrity check completed.")
 
 
+
+
 if __name__ == "__main__":
-    ImgChecker()
+    get_json_data()
+   # ImgChecker()
