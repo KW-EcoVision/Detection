@@ -11,7 +11,7 @@ from PIL import ImageFile
 import json
 from tqdm import tqdm
 ImageFile.LOAD_TRUNCATED_IMAGES = True
-#test
+
 class Dataset(Dataset):
     def __init__(self, json_dir, cache_size=40000):
         self.json_dir = json_dir
