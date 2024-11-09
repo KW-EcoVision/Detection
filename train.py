@@ -16,6 +16,7 @@ from PIL import ImageFile
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 import matplotlib.pyplot as plt
 from torch.cuda.amp import autocast, GradScaler
+
 scaler = GradScaler()
 BACK = 'RES'
 torch.manual_seed(100)
@@ -29,15 +30,15 @@ WEIGHT_DECAY = 0
 NUM_WORKERS = 10
 PIN_MEMORY = False
 EPOCHS = 500
-LOAD_MODEL = False
+LOAD_MODEL = True
 MODEL_SAVE_PATH = f'./weights/{BACK}.pt'
 LOAD_MODEL_FILE = f'./weights/{BACK}.pt'
 COMMON_PATH = '/media/sien/DATA/DATA/dataset/voc_data/VOCtrainval_11-May-2012/VOCdevkit/VOC2012/for_detection'
 IMG_DIR = COMMON_PATH + '/JPEGImages/'
 LABEL_DIR = COMMON_PATH + '/Annotations/'
-MODE = 'train'
+MODE = 'inference'
 
-train_json, test_json = load_and_split_json(dir = './file_paths.json')
+train_json, test_json = load_and_split_json(dir='./file_paths.json')
 train_ds = Dataset(train_json)
 test_ds = Dataset(train_json)
 
@@ -125,15 +126,18 @@ def test_step(train_loader, model):
     for x, y in train_loader:
         x, y = x.to(DEVICE), y.to(DEVICE)
         pred = model(x)
-        if len(pred.shape) == 2:
-            pred = pred.view(-1, 7, 7, 25)
-        boxes, class_list = decoding_label(np.array(pred.cpu().detach().squeeze(0)))
+        x = x[0]
+        y = y[0]
+        pred = pred[0]
+        boxes, class_list = decoding_label(np.array(pred.cpu().detach()))
         boxes, class_list = non_max_suppression(boxes, 0.2, 0.5, class_list)
         img = torch.permute(x.squeeze(0), (1, 2, 0))
         img = np.array(img.cpu().detach())
         img = (img * 224).astype(np.uint8)
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         img = draw(boxes, img, class_list)
+        plt.imshow(img)
+        plt.show()
         pred_store.append(img)
 
 
@@ -157,41 +161,41 @@ if __name__ == "__main__":
     else:
         model.to(DEVICE)
 
-    best_loss = np.inf
+    if MODE == 'train':
+        best_loss = np.inf
+        for epoch in range(1, EPOCHS + 1):
+            print(f'Epoch [{epoch}/{EPOCHS}] 시작')
 
-    for epoch in range(1, EPOCHS + 1):
-        print(f'Epoch [{epoch}/{EPOCHS}] 시작')
-
-        loss = train_step(
-            train_loader=train_ds,
-            model=model,
-            optimizer=optimizer,
-            loss_fn=loss_fn
-        )
-        print(f'훈련 손실: {loss:.4f}')
-
-        if epoch % 5 == 0:
-            print('검증 시작')
-            val_loss = validation_step(
-                validation_loader=test_ds,
+            loss = train_step(
+                train_loader=train_ds,
                 model=model,
+                optimizer=optimizer,
                 loss_fn=loss_fn
             )
-            print(f'검증 손실: {val_loss:.4f}')
+            print(f'훈련 손실: {loss:.4f}')
 
-            if val_loss < best_loss:
-                best_loss = val_loss
-                torch.save(model.state_dict(), MODEL_SAVE_PATH)
-                print(f'최상의 검증 손실 갱신: {val_loss:.4f} - 모델 저장 완료')
+            if epoch % 5 == 0:
+                print('검증 시작')
+                val_loss = validation_step(
+                    validation_loader=test_ds,
+                    model=model,
+                    loss_fn=loss_fn
+                )
+                print(f'검증 손실: {val_loss:.4f}')
 
-    print("모델 학습 완료")
+                if val_loss < best_loss:
+                    best_loss = val_loss
+                    torch.save(model.state_dict(), MODEL_SAVE_PATH)
+                    print(f'최상의 검증 손실 갱신: {val_loss:.4f} - 모델 저장 완료')
+
+        print("모델 학습 완료")
 
     if MODE == 'inference':
         std = torch.load(f'weights/{BACK}.pt')
         model.load_state_dict(std)
         model = model.to('cuda')
         model.eval()
-        test_step(test_loader, model)
+        test_step(test_ds, model)
     if MODE == 'field':
         std = torch.load(f'weights/{BACK}.pt')
         model.load_state_dict(std)

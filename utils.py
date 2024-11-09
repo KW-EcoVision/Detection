@@ -120,22 +120,22 @@ def decoding_label(label):
             xmax = int(cx + w / 2)
             ymin = int(cy - h / 2)
             ymax = int(cy + h / 2)
-            conf = label[i][j][24]
+            conf = label[i][j][19]
             class_pred = np.max(label[i][j][:15])
             bbox.append([class_pred, conf, xmin, ymin, xmax, ymax])
             class_box.append(label[i][j][:15])
 
         for j in range(7):
-            cx = (label[i][j][21] * CELL) + (i * CELL)
-            cy = label[i][j][22] * CELL + (j * CELL)
-            w = label[i][j][23] * IMG_SIZE
-            h = label[i][j][24] * IMG_SIZE
+            cx = (label[i][j][20] * CELL) + (i * CELL)
+            cy = label[i][j][21] * CELL + (j * CELL)
+            w = label[i][j][22] * IMG_SIZE
+            h = label[i][j][23] * IMG_SIZE
 
             xmin = int(cx - w / 2)
             xmax = int(cx + w / 2)
             ymin = int(cy - h / 2)
             ymax = int(cy + h / 2)
-            conf = label[i][j][25]
+            conf = label[i][j][24]
             class_pred = np.max(label[i][j][:15])
             bbox.append([class_pred, conf, xmin, ymin, xmax, ymax])
             class_box.append(label[i][j][:15])
