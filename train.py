@@ -180,7 +180,7 @@ if __name__ == "__main__":
         print(f'훈련 손실: {loss:.4f}, 훈련 mAP: {train_mAP["map"]:.4f}')
         mAP_metric.reset()  # 다음 에포크를 위해 mAP 메트릭 초기화
 
-        if epoch % 5 == 0:
+        if epoch % 1 == 0:
             print('검증 시작')
             val_loss, val_mAP = validation_step(
                 validation_loader=test_loader,
