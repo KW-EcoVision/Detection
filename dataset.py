@@ -2,29 +2,27 @@ import cv2
 import numpy as np
 from torch.utils.data import Dataset, DataLoader
 import torch
-from utils import for_test_decode_label, load_and_split_json, ParseJson, non_max_suppression,draw
+from utils import for_test_decode_label, load_and_split_json, ParseJson, non_max_suppression, draw
 from PIL import Image as image
-import matplotlib.pyplot as plt
+import functools
 
 
 class Dataset(Dataset):
-    def __init__(self, json_dir):
+    def __init__(self, json_dir, cache_size=40000):
         self.json_dir = json_dir
-        '''
-        self.img = torch.from_numpy(np.zeros(shape=(len(self.json_dir), 3, 224, 224))).float()
-        self.label = torch.from_numpy(np.zeros(shape=(len(self.json_dir), 7, 7, 25))).float()
-        '''
+        self.cache_size = cache_size
+
+    @functools.lru_cache(maxsize=40000)  # 캐시 크기를 조절하여 메모리 관리
+    def load_data(self, idx):
+        img, label = ParseJson(self.json_dir[idx])
+        return img, label
 
     def __getitem__(self, idx):
-        img, label = ParseJson(self.json_dir[idx])
-        if img is None:
-            return self.__getitem__((idx + 1) % len(self.json_dir))
-        return torch.Tensor(img).to(torch.float).to('cuda'), torch.Tensor(label).to('cuda')
-
-
+        img, label = self.load_data(idx)
+        return torch.Tensor(img).float().to('cuda'), torch.Tensor(label).to('cuda')
 
     def __len__(self):
-        return int(len(self.json_dir))
+        return len(self.json_dir)
 
 
 if __name__ == "__main__":
