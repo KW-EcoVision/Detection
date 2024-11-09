@@ -17,8 +17,11 @@ class Dataset(Dataset):
 
     def __getitem__(self, idx):
         img, label = ParseJson(self.json_dir[idx])
+        if img is None:
+            return self.__getitem__((idx + 1) % len(self.json_dir))
+        return torch.Tensor(img).to(torch.float).to('cuda'), torch.Tensor(label).to('cuda')
 
-        return img, label
+
 
     def __len__(self):
         return int(len(self.json_dir))

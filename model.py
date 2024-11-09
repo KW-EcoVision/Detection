@@ -37,7 +37,7 @@ class YOLO(torch.nn.Module):
             nn.Linear(50176, 4096),
             nn.LeakyReLU(),
             nn.Dropout(0.2),
-            nn.Linear(4096, 1470)
+            nn.Linear(4096, 1225)
         )
 
         # 가중치 초기화
@@ -54,5 +54,5 @@ class YOLO(torch.nn.Module):
         out = self.backbone(x)
         out = self.conv(out)
         out = self.linear(out)
-        out = torch.reshape(out, (-1, 7, 7, 30))
+        out = torch.reshape(out, (-1, 7, 7, 25))
         return out

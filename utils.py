@@ -16,7 +16,7 @@ import random
 'img_path' is direct img_path
 '''
 
-img_path_abs = '/media/sien/DATA/DATA/dataset/eco/생활 폐기물 이미지/Training/img'
+img_path_abs = '/media/unsi/media/data/생활 폐기물 이미지/Training/'
 classes_num = {'종이류': 0, '플라스틱류': 1, '유리병류': 2, '캔류': 3, '고철류': 4, '의류': 5,
                '전자제품': 6, '스티로폼류': 7, '도기류': 8, '비닐류': 9, '가구': 10, '자전거': 11,
                '형광등': 12, '페트병류': 13, '나무류': 14}
@@ -191,7 +191,7 @@ def get_augmentor():
     ])
 
 
-def get_json_data(json_dir='/media/sien/DATA/DATA/dataset/eco/생활 폐기물 이미지/Training/label'):
+def get_json_data(json_dir='/media/unsi/media/data/생활 폐기물 이미지/label/Training_라벨링데이터'):
     path_list = []
     for file_path, _, file_name in os.walk(json_dir):
         for name in file_name:
@@ -321,7 +321,7 @@ def intersection_over_union(boxes_preds, boxes_labels):
 
 
 def bbox_attr(data, i):
-    attr_start = 20 + i
+    attr_start = 15 + i
     return data[..., attr_start::5]
 
 
