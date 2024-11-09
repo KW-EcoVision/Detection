@@ -1,7 +1,9 @@
 import os
 import random
+
 import cv2
 import numpy as np
+import cv2 as cv
 import torch
 from model import YOLO
 from testmodel import Yolov1 as YOLO_DARK
@@ -9,10 +11,12 @@ from utils import decoding_label, non_max_suppression, draw, load_and_split_json
 from dataset import Dataset
 from tqdm import tqdm
 from torch.utils.data import DataLoader
-from torchmetrics.detection.mean_ap import MeanAveragePrecision
-from field import field
-import matplotlib.pyplot as plt
+from PIL import ImageFile
 
+ImageFile.LOAD_TRUNCATED_IMAGES = True
+import matplotlib.pyplot as plt
+from torch.cuda.amp import autocast, GradScaler
+scaler = GradScaler()
 BACK = 'RES'
 torch.manual_seed(100)
 torch.cuda.manual_seed(100)
@@ -33,9 +37,9 @@ IMG_DIR = COMMON_PATH + '/JPEGImages/'
 LABEL_DIR = COMMON_PATH + '/Annotations/'
 MODE = 'train'
 
-train_json, test_json = load_and_split_json()
+train_json, test_json = load_and_split_json(dir = './file_paths.json')
 train_ds = Dataset(train_json)
-test_ds = Dataset(test_json)
+test_ds = Dataset(train_json)
 
 if BACK == 'VGG':
     VGG16 = torch.hub.load('pytorch/vision:v0.10.0', 'vgg16')
@@ -61,7 +65,7 @@ test_loader = DataLoader(test_ds, batch_size=BATCH_SIZE, shuffle=True)
 data_stream = torch.cuda.Stream()
 
 
-def train_step(train_loader, model, optimizer, loss_fn, mAP_metric):
+def train_step(train_loader, model, optimizer, loss_fn):
     model.train()
     loop = tqdm(train_loader, leave=True)
     mean_loss = []
@@ -69,80 +73,68 @@ def train_step(train_loader, model, optimizer, loss_fn, mAP_metric):
     for x, y in loop:
         try:
             x, y = x.to(DEVICE), y.to(DEVICE)
-            pred = model(x)
 
-            # 모델 출력 차원 확인 및 조정
-            if len(pred.shape) == 2:
-                pred = pred.view(-1, 7, 7, 25)
+            # autocast 및 scaler를 사용하여 혼합 정밀도 훈련
+            with autocast():
+                pred = model(x)
+                loss = loss_fn(pred, y)
 
-            # 손실 계산 및 역전파
-            loss = loss_fn(pred, y)
             optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
 
-            # mAP 업데이트
-            for i in range(x.size(0)):
-                boxes_pred, classes_pred = decoding_label(pred[i].cpu().detach().numpy())
-                boxes_pred, classes_pred = non_max_suppression(boxes_pred, 0.2, 0.5, classes_pred)
-
-                preds = [{"boxes": torch.tensor(boxes_pred), "labels": torch.tensor(classes_pred)}]
-                targets = [{"boxes": torch.tensor(y[i][..., :4]), "labels": torch.tensor(y[i][..., 4].long())}]
-
-                mAP_metric.update(preds, targets)
-
-            # 현재 mAP 값 계산
-            current_mAP = mAP_metric.compute()["map"].item()
-
-            # tqdm 상태 업데이트
-            loop.set_postfix(loss=loss.item(), mAP=current_mAP)
+            loop.set_postfix(loss=loss.item())
             mean_loss.append(loss.item())
 
         except Exception as e:
             print(f"Warning: Exception encountered during training - {e}")
             print("Skipping this batch and continuing with the next.")
 
-    # 에포크 손실 출력
     if mean_loss:
         epoch_loss = sum(mean_loss) / len(mean_loss)
+        print(f'one epoch loss : {epoch_loss}')
     else:
-        epoch_loss = np.inf  # 모든 배치에서 예외 발생 시
+        epoch_loss = np.inf
 
-    # 최종 에포크 mAP 계산
-    final_mAP = mAP_metric.compute()
-    return epoch_loss, final_mAP
+    return epoch_loss
 
 
-def validation_step(validation_loader, model, loss_fn, mAP_metric):
+def validation_step(validation_loader, model, loss_fn):
     model.eval()
     with torch.no_grad():
         loop = tqdm(validation_loader, leave=True)
         loss_store = []
+
         for x, y in loop:
             x, y = x.to(DEVICE), y.to(DEVICE)
-            pred = model(x)
-            loss = loss_fn(pred, y)
+            with autocast():  # autocast를 사용하여 float16으로 계산
+                pred = model(x)
+                loss = loss_fn(pred, y)
+
             loss_store.append(loss.item())
+            loop.set_postfix(loss=loss.item())
 
-            # mAP 업데이트
-            for i in range(x.size(0)):
-                boxes_pred, classes_pred = decoding_label(pred[i].cpu().detach().numpy())
-                boxes_pred, classes_pred = non_max_suppression(boxes_pred, 0.2, 0.5, classes_pred)
+        print(f'valdation loss : {sum(loss_store) / len(loss_store)}')
+    return sum(loss_store) / len(loss_store)
 
-                preds = [{"boxes": torch.tensor(boxes_pred), "labels": torch.tensor(classes_pred)}]
-                targets = [{"boxes": torch.tensor(y[i][..., :4]), "labels": torch.tensor(y[i][..., 4].long())}]
 
-                mAP_metric.update(preds, targets)
-
-            # 현재 mAP 값 계산
-            current_mAP = mAP_metric.compute()["map"].item()
-
-            # tqdm 상태 업데이트
-            loop.set_postfix(loss=loss.item(), mAP=current_mAP)
-
-        validation_loss = sum(loss_store) / len(loss_store) if loss_store else np.inf
-    final_mAP = mAP_metric.compute()
-    return validation_loss, final_mAP
+def test_step(train_loader, model):
+    model.eval()
+    pred_store = []
+    for x, y in train_loader:
+        x, y = x.to(DEVICE), y.to(DEVICE)
+        pred = model(x)
+        if len(pred.shape) == 2:
+            pred = pred.view(-1, 7, 7, 25)
+        boxes, class_list = decoding_label(np.array(pred.cpu().detach().squeeze(0)))
+        boxes, class_list = non_max_suppression(boxes, 0.2, 0.5, class_list)
+        img = torch.permute(x.squeeze(0), (1, 2, 0))
+        img = np.array(img.cpu().detach())
+        img = (img * 224).astype(np.uint8)
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        img = draw(boxes, img, class_list)
+        pred_store.append(img)
 
 
 def load_model(model, model_path, device):
@@ -157,8 +149,8 @@ if __name__ == "__main__":
     from myloss import YoloLoss as myloss
 
     loss_fn = myloss()
+    # =loss_fn = torch.nn.MSELoss()
     optimizer = torch.optim.AdamW(params=model.parameters(), lr=LEARNING_RATE)
-    mAP_metric = MeanAveragePrecision()  # mAP 메트릭 초기화
 
     if LOAD_MODEL:
         model = load_model(model, f'./weights/{BACK}.pt', DEVICE)
@@ -170,26 +162,22 @@ if __name__ == "__main__":
     for epoch in range(1, EPOCHS + 1):
         print(f'Epoch [{epoch}/{EPOCHS}] 시작')
 
-        loss, train_mAP = train_step(
-            train_loader=train_loader,
+        loss = train_step(
+            train_loader=train_ds,
             model=model,
             optimizer=optimizer,
-            loss_fn=loss_fn,
-            mAP_metric=mAP_metric
+            loss_fn=loss_fn
         )
-        print(f'훈련 손실: {loss:.4f}, 훈련 mAP: {train_mAP["map"]:.4f}')
-        mAP_metric.reset()  # 다음 에포크를 위해 mAP 메트릭 초기화
+        print(f'훈련 손실: {loss:.4f}')
 
-        if epoch % 1 == 0:
+        if epoch % 5 == 0:
             print('검증 시작')
-            val_loss, val_mAP = validation_step(
-                validation_loader=test_loader,
+            val_loss = validation_step(
+                validation_loader=test_ds,
                 model=model,
-                loss_fn=loss_fn,
-                mAP_metric=mAP_metric
+                loss_fn=loss_fn
             )
-            print(f'검증 손실: {val_loss:.4f}, 검증 mAP: {val_mAP["map"]:.4f}')
-            mAP_metric.reset()  # 다음 에포크를 위해 mAP 메트릭 초기화
+            print(f'검증 손실: {val_loss:.4f}')
 
             if val_loss < best_loss:
                 best_loss = val_loss
@@ -197,3 +185,15 @@ if __name__ == "__main__":
                 print(f'최상의 검증 손실 갱신: {val_loss:.4f} - 모델 저장 완료')
 
     print("모델 학습 완료")
+
+    if MODE == 'inference':
+        std = torch.load(f'weights/{BACK}.pt')
+        model.load_state_dict(std)
+        model = model.to('cuda')
+        model.eval()
+        test_step(test_loader, model)
+    if MODE == 'field':
+        std = torch.load(f'weights/{BACK}.pt')
+        model.load_state_dict(std)
+        model = model.to('cpu')
+        model.eval()
