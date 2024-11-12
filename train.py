@@ -3,7 +3,6 @@ import random
 
 import cv2
 import numpy as np
-import cv2 as cv
 import torch
 from model import YOLO
 from testmodel import Yolov1 as YOLO_DARK
