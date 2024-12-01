@@ -1,10 +1,13 @@
 from flask import Flask, request, jsonify
 import torch
 from PIL import Image
-from model import YOLO  # YOLO 모델은 사용자 정의 모델을 가정
+from model import YOLO  # YOLO 모델은 사용자 정의 모델로 가정
 from utils import decoding_label, non_max_suppression, draw
 import torchvision
 import numpy as np
+import pyheif  # HEIC/HEIF 지원
+import io
+
 classes_num_rev = {
     0: 'paper',
     1: 'plastic',
@@ -22,6 +25,7 @@ classes_num_rev = {
     13: 'PET bottles',
     14: 'trees',
 }
+
 app = Flask(__name__)
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 BACK = 'RES'
@@ -42,15 +46,35 @@ def load_yolo_model():
 
 model = load_yolo_model()
 
+def convert_heic_to_rgb(file_stream):
+    """HEIC 이미지를 RGB 형식으로 변환"""
+    heif_file = pyheif.read(file_stream.read())
+    img = Image.frombytes(
+        heif_file.mode,
+        heif_file.size,
+        heif_file.data,
+        "raw",
+        heif_file.mode,
+        heif_file.stride
+    )
+    return img.convert('RGB')
+
 @app.route('/detect', methods=['POST'])
 def detect():
     if 'image' not in request.files:
         return jsonify({'error': 'No image provided'}), 400
 
     file = request.files['image']
-    img = Image.open(file.stream).convert('RGB')
+
+    # HEIC 파일인지 확인하고 변환
+    try:
+        img = Image.open(file.stream).convert('RGB')
+    except IOError:
+        file.stream.seek(0)
+        img = convert_heic_to_rgb(file.stream)
+
     img = img.resize((224, 224))
-    img = torch.from_numpy(np.array(img)).to(DEVICE).permute(2, 0, 1).to(dtype=torch.float32).unsqueeze(0)/224.0
+    img = torch.from_numpy(np.array(img)).to(DEVICE).permute(2, 0, 1).to(dtype=torch.float32).unsqueeze(0) / 224.0
 
     with torch.no_grad():
         pred = model(img)
@@ -62,7 +86,6 @@ def detect():
     max_index = np.argmax(class_list)
     result = classes_num_rev[max_index]
     return jsonify({'predictions': result})
-
 
 # 서버 실행
 if __name__ == '__main__':
